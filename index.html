@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comparador de Amortização — SAC & Price</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="header-eyebrow">Planejamento Financeiro</div>
+    <h1>Comparador de <span>Amortização</span></h1>
+    <p>Simule e compare financiamentos com amortizações extras — Tabela SAC e Tabela Price</p>
+  </div>
+</header>
+
+<main>
+  <div id="toolbar">
+    <button class="btn btn-primary" onclick="addScenario()">+ Adicionar Cenário</button>
+    <button class="btn btn-success" onclick="simulate()">▶ Simular</button>
+    <button class="btn btn-ghost" onclick="clearStorage()" title="Apagar cenários salvos e voltar ao padrão">↺ Resetar</button>
+  </div>
+  <div id="scenarios"></div>
+  <div id="results"></div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
