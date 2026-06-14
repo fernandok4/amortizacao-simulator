@@ -4,6 +4,7 @@ const COLORS = ['#2563eb','#dc2626','#16a34a','#d97706','#7c3aed','#db2777','#08
 // ─── State ────────────────────────────────────────────────────────────────────
 let nextId = 1;
 let scenarios = [];
+let buyers = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function val(id) { return document.getElementById(id)?.value ?? ''; }
@@ -14,8 +15,14 @@ function escHtml(s) {
 
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 });
 const pctFmt = new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const pctShortFmt = new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function brl(v) { return brlFmt.format(v); }
 function pct(v) { return pctFmt.format(v); }
+function pctShort(v) { return pctShortFmt.format(v); }
+function num(v, fallback = 0) {
+  const n = parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) ? n : fallback;
+}
 
 // ─── Scenario management ──────────────────────────────────────────────────────
 function nextMonthDate() {
@@ -25,7 +32,54 @@ function nextMonthDate() {
   return d.toISOString().slice(0, 10);
 }
 
+function defaultParticipants() {
+  return [{ id: 1, name: 'Pessoa 1', ownershipPct: 100, downPayment: 0 }];
+}
+
+function normalizeParticipants(participants) {
+  if (!Array.isArray(participants) || participants.length === 0) return defaultParticipants();
+  return participants.map((p, idx) => ({
+    id: Number.isFinite(Number(p.id)) ? Number(p.id) : idx + 1,
+    name: String(p.name || `Pessoa ${idx + 1}`),
+    ownershipPct: num(p.ownershipPct, idx === 0 ? 100 : 0),
+    downPayment: num(p.downPayment, 0),
+  }));
+}
+
+function totalDownPayment(s) {
+  return (s || []).reduce((sum, p) => sum + num(p.downPayment), 0);
+}
+
+function totalOwnershipPct(participants) {
+  return (participants || []).reduce((sum, p) => sum + num(p.ownershipPct), 0);
+}
+
+function financedAmount(s) {
+  return Math.max(0, num(s.propertyValue) - totalDownPayment(buyers));
+}
+
+function normalizeScenario(s = {}) {
+  const legacyAmount = num(s.amount, 270000);
+  const legacyDownPayment = Array.isArray(s.participants) ? totalDownPayment(normalizeParticipants(s.participants)) : 0;
+  const inferredPropertyValue = s.propertyValue == null
+    ? legacyAmount + legacyDownPayment
+    : num(s.propertyValue, legacyAmount);
+  const { participants: _legacyParticipants, ...rest } = s;
+
+  return {
+    ...rest,
+    propertyValue: inferredPropertyValue,
+    amount: Math.max(0, inferredPropertyValue - totalDownPayment(buyers)),
+    amortEntries: Array.isArray(s.amortEntries) ? s.amortEntries.map(e => ({...e})) : [],
+  };
+}
+
+function nextParticipantId() {
+  return Math.max(0, ...(buyers || []).map(p => Number(p.id) || 0)) + 1;
+}
+
 function saveAllFromDOM() {
+  if (document.getElementById('buyers-panel')) buyers = readBuyersFromDOM();
   scenarios.forEach(s => {
     if (document.getElementById(`name-${s.id}`)) readScenarioFromDOM(s.id);
   });
@@ -35,10 +89,10 @@ function addScenario(defaults = {}) {
   saveAllFromDOM();
   const id = nextId++;
   const color = COLORS[scenarios.length % COLORS.length];
-  scenarios.push({
+  const normalized = normalizeScenario({
     id, color,
     name:         defaults.name         ?? `Cenário ${id}`,
-    amount:       defaults.amount       ?? 270000,
+    propertyValue: defaults.propertyValue ?? defaults.amount ?? 270000,
     rate:         defaults.rate         ?? 12.5,
     rateType:     defaults.rateType     ?? 'annual',
     installments: defaults.installments ?? 420,
@@ -46,6 +100,9 @@ function addScenario(defaults = {}) {
     startDate:    defaults.startDate    ?? nextMonthDate(),
     amortEntries: defaults.amortEntries ? defaults.amortEntries.map(e => ({...e})) : [],
   });
+  normalized.color = color;
+  normalized.id = id;
+  scenarios.push(normalized);
   renderScenarios();
 }
 
@@ -58,15 +115,20 @@ function removeScenario(id) {
 function duplicateScenario(id) {
   saveAllFromDOM();
   const orig = scenarios.find(s => s.id === id);
-  addScenario({ ...orig, name: orig.name + ' (cópia)', amortEntries: orig.amortEntries.map(e => ({...e})) });
+  addScenario({
+    ...orig,
+    name: orig.name + ' (cópia)',
+    amortEntries: orig.amortEntries.map(e => ({...e})),
+  });
 }
 
 function readScenarioFromDOM(id) {
   const s = scenarios.find(s => s.id === id);
   if (!s) return;
   s.name         = val(`name-${id}`);
-  s.amount       = parseFloat(val(`amount-${id}`)) || 0;
-  s.rate         = parseFloat(val(`rate-${id}`).replace(',', '.')) || 0;
+  s.propertyValue = num(val(`propertyValue-${id}`));
+  s.amount       = financedAmount(s);
+  s.rate         = num(val(`rate-${id}`));
   s.rateType     = val(`rateType-${id}`);
   s.installments = parseInt(val(`installments-${id}`)) || 0;
   s.type         = val(`type-${id}`);
@@ -74,11 +136,136 @@ function readScenarioFromDOM(id) {
   // amortEntries managed separately
 }
 
+function readBuyersFromDOM() {
+  const rows = document.querySelectorAll('[data-buyer-row]');
+  return Array.from(rows).map((row, idx) => {
+    const buyerId = row.dataset.buyerId;
+    return {
+      id: Number(buyerId) || idx + 1,
+      name: val(`buyer-name-${buyerId}`).trim() || `Pessoa ${idx + 1}`,
+      ownershipPct: num(val(`buyer-pct-${buyerId}`)),
+      downPayment: num(val(`buyer-down-${buyerId}`)),
+    };
+  });
+}
+
+function buyerRowsHtml() {
+  return buyers.map((p, idx) => `
+    <tr data-buyer-row data-buyer-id="${p.id}">
+      <td>
+        <input id="buyer-name-${p.id}" type="text" value="${escHtml(p.name)}"
+          aria-label="Nome do comprador ${idx + 1}" oninput="updateBuyerSummary()" />
+      </td>
+      <td>
+        <input id="buyer-pct-${p.id}" type="number" min="0" max="100" step="0.01"
+          value="${p.ownershipPct}" aria-label="Percentual do imóvel de ${escHtml(p.name || `Pessoa ${idx + 1}`)}" oninput="updateBuyerSummary()" />
+      </td>
+      <td>
+        <input id="buyer-down-${p.id}" type="number" min="0" step="1000"
+          value="${p.downPayment}" aria-label="Entrada de ${escHtml(p.name || `Pessoa ${idx + 1}`)}" oninput="updateBuyerSummary()" />
+      </td>
+      <td>
+        ${buyers.length > 1
+          ? `<button class="btn btn-danger btn-xs" onclick="removeBuyer(${p.id})" title="Remover ${escHtml(p.name || `Pessoa ${idx + 1}`)}" aria-label="Remover ${escHtml(p.name || `Pessoa ${idx + 1}`)}">✕</button>`
+          : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function buyersPanelHtml() {
+  return `
+    <section class="buyers-panel global-buyers-panel" id="buyers-panel">
+      <div class="buyers-header">
+        <div>
+          <span class="buyers-title">Compradores</span>
+          <span class="buyers-subtitle">Percentual do imóvel e entrada individual usados em todos os cenários</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="addBuyer()">+ Comprador</button>
+      </div>
+      <div class="buyers-table-wrap">
+        <table class="buyers-table">
+          <thead><tr>
+            <th>Nome</th><th>% do imóvel</th><th>Entrada (R$)</th><th></th>
+          </tr></thead>
+          <tbody>${buyerRowsHtml()}</tbody>
+        </table>
+      </div>
+      <div class="buyer-summary" id="buyer-summary"></div>
+    </section>`;
+}
+
+function renderBuyers() {
+  const container = document.getElementById('buyers');
+  if (!container) return;
+  container.innerHTML = buyersPanelHtml();
+  updateBuyerSummary();
+  saveToStorage();
+}
+
+function addBuyer() {
+  saveAllFromDOM();
+  const id = nextParticipantId();
+  buyers.push({ id, name: `Pessoa ${buyers.length + 1}`, ownershipPct: 0, downPayment: 0 });
+  renderBuyers();
+  saveToStorage();
+}
+
+function removeBuyer(buyerId) {
+  saveAllFromDOM();
+  if (buyers.length <= 1) return;
+  buyers = buyers.filter(p => p.id !== buyerId);
+  renderBuyers();
+  saveToStorage();
+}
+
+function updateBuyerSummary() {
+  const summary = document.getElementById('buyer-summary');
+  if (!summary) return;
+  const currentBuyers = readBuyersFromDOM();
+  const totalDown = totalDownPayment(currentBuyers);
+  const pctTotal = totalOwnershipPct(currentBuyers);
+  const invalid = Math.abs(pctTotal - 100) > 0.01;
+
+  summary.classList.toggle('summary-alert', invalid);
+  summary.innerHTML = `
+    <span>Entrada total: <strong>${brl(totalDown)}</strong></span>
+    <span>Soma dos percentuais: <strong>${pctTotal.toFixed(2).replace('.', ',')}%</strong></span>
+  `;
+  updateScenarioFinancedSummaries(currentBuyers);
+}
+
+function updateScenarioFinancedSummary(scenarioId) {
+  const summary = document.getElementById(`scenario-financed-${scenarioId}`);
+  if (!summary) return;
+  const propertyValue = num(val(`propertyValue-${scenarioId}`));
+  const totalDown = totalDownPayment(document.getElementById('buyers-panel') ? readBuyersFromDOM() : buyers);
+  const financed = propertyValue - totalDown;
+  const invalid = financed < 0;
+  summary.classList.toggle('summary-alert', invalid);
+  summary.innerHTML = `Valor financiado neste cenário: <strong>${brl(Math.max(0, financed))}</strong>`;
+}
+
+function updateScenarioFinancedSummaries(currentBuyers = buyers) {
+  const totalDown = totalDownPayment(currentBuyers);
+  scenarios.forEach(s => {
+    const summary = document.getElementById(`scenario-financed-${s.id}`);
+    if (!summary) return;
+    const propertyValue = num(val(`propertyValue-${s.id}`));
+    const financed = propertyValue - totalDown;
+    summary.classList.toggle('summary-alert', financed < 0);
+    summary.innerHTML = `Valor financiado neste cenário: <strong>${brl(Math.max(0, financed))}</strong>`;
+  });
+}
+
 // ─── Render scenarios ─────────────────────────────────────────────────────────
 function renderScenarios() {
   const container = document.getElementById('scenarios');
   container.innerHTML = scenarios.map(s => scenarioCardHtml(s)).join('');
-  scenarios.forEach(s => renderAmortEntries(s.id));
+  scenarios.forEach(s => {
+    renderAmortEntries(s.id);
+    updateScenarioFinancedSummary(s.id);
+  });
   saveToStorage();
 }
 
@@ -98,8 +285,8 @@ function scenarioCardHtml(s) {
             oninput="scenarios.find(x=>x.id==${s.id}).name=this.value;document.getElementById('title-${s.id}').textContent=this.value;" />
         </div>
         <div class="field">
-          <label>Valor financiado (R$)</label>
-          <input id="amount-${s.id}" type="number" min="0" step="1000" value="${s.amount}" />
+          <label>Valor do imóvel (R$)</label>
+          <input id="propertyValue-${s.id}" type="number" min="0" step="1000" value="${s.propertyValue}" oninput="updateScenarioFinancedSummary(${s.id})" />
         </div>
         <div class="field">
           <label>Nº de parcelas</label>
@@ -130,6 +317,7 @@ function scenarioCardHtml(s) {
           <input id="startDate-${s.id}" type="date" value="${s.startDate}" />
         </div>
       </div>
+      <div class="scenario-financed-summary" id="scenario-financed-${s.id}"></div>
 
       <!-- ── Amortizações Extras ── -->
       <div class="amort-extra-header" onclick="toggleAmortSection(${s.id})">
@@ -303,6 +491,170 @@ function buildAmortPlan(amortEntries) {
     }
   }
   return plan;
+}
+
+function scenarioLabel(s) {
+  return s.name?.trim() || `Cenário ${s.id}`;
+}
+
+function validateBuyerInputs() {
+  const errors = [];
+  const pctTotal = totalOwnershipPct(buyers);
+
+  if (!Array.isArray(buyers) || buyers.length === 0) errors.push('Informe pelo menos um comprador.');
+  if (Math.abs(pctTotal - 100) > 0.01) errors.push(`Os percentuais dos compradores somam ${pctTotal.toFixed(2).replace('.', ',')}%, mas precisam somar 100%.`);
+
+  (buyers || []).forEach((p, idx) => {
+    const person = p.name?.trim() || `Pessoa ${idx + 1}`;
+    if (num(p.ownershipPct) < 0) errors.push(`O percentual de ${person} não pode ser negativo.`);
+    if (num(p.downPayment) < 0) errors.push(`A entrada de ${person} não pode ser negativa.`);
+  });
+
+  return errors;
+}
+
+function validateScenarioInputs(s) {
+  const label = scenarioLabel(s);
+  const errors = [];
+  const propertyValue = num(s.propertyValue);
+  const totalDown = totalDownPayment(buyers);
+  const amount = propertyValue - totalDown;
+
+  if (propertyValue <= 0) errors.push(`${label}: informe um valor do imóvel maior que zero.`);
+  if (totalDown > propertyValue + 0.005) errors.push(`${label}: a soma das entradas não pode ser maior que o valor do imóvel.`);
+  if (amount <= 0.005) errors.push(`${label}: o valor financiado precisa ser maior que zero para simular amortização.`);
+  if (num(s.rate) < 0) errors.push(`${label}: a taxa de juros não pode ser negativa.`);
+  if (parseInt(s.installments) < 1) errors.push(`${label}: informe pelo menos uma parcela.`);
+
+  return errors;
+}
+
+function buildCostAllocation(c) {
+  const totalFinancingPaid = c.totalPaid;
+  const totalCost = c.totalDownPayment + totalFinancingPaid;
+  const errors = [];
+
+  const people = c.participants.map((p, idx) => {
+    const share = num(p.ownershipPct) / 100;
+    const downPayment = num(p.downPayment);
+    const targetTotal = totalCost * share;
+    const financingTarget = targetTotal - downPayment;
+    const name = p.name?.trim() || `Pessoa ${idx + 1}`;
+
+    if (financingTarget < -0.005) {
+      errors.push(`${scenarioLabel(c)}: a entrada de ${name} (${brl(downPayment)}) já passa da meta de contribuição (${brl(targetTotal)}).`);
+    }
+
+    return {
+      ...p,
+      name,
+      ownershipShare: share,
+      downPayment,
+      targetTotal,
+      financingTarget: Math.max(0, financingTarget),
+      financingShare: totalFinancingPaid > 0 ? Math.max(0, financingTarget) / totalFinancingPaid : 0,
+    };
+  });
+
+  if (errors.length > 0) return { errors, allocation: null };
+
+  const monthlyRows = c.rows.map(r => {
+    const totalMonth = r.installment + r.extraAmort;
+    return {
+      period: r.period,
+      date: r.date,
+      totalMonth,
+      people: people.map(p => ({ id: p.id, amount: totalMonth * p.financingShare })),
+    };
+  });
+
+  people.forEach(p => {
+    p.financingPaid = monthlyRows.reduce((sum, row) => {
+      const person = row.people.find(x => x.id === p.id);
+      return sum + (person?.amount || 0);
+    }, 0);
+    p.finalContribution = p.downPayment + p.financingPaid;
+    p.difference = p.finalContribution - p.targetTotal;
+  });
+
+  return {
+    errors,
+    allocation: { totalDownPayment: c.totalDownPayment, totalFinancingPaid, totalCost, people, monthlyRows },
+  };
+}
+
+function allocationSectionHtml(computed) {
+  return `
+    <div class="allocation-section">
+      <div class="section-title">Rateio por comprador</div>
+      ${computed.map(c => {
+        const allocation = c.allocation;
+        if (!allocation) return '';
+        return `
+          <div class="allocation-card" style="--card-accent:${c.color}">
+            <div class="allocation-card-header">
+              <span class="dot" style="background:${c.color}"></span>
+              <strong>${escHtml(c.name)}</strong>
+              <span class="badge badge-${c.type.toLowerCase()}">${c.type}</span>
+              <span class="allocation-total">Custo total: ${brl(allocation.totalCost)}</span>
+            </div>
+            <div class="table-wrap allocation-summary-wrap">
+              <table class="allocation-summary-table">
+                <thead><tr>
+                  <th>Comprador</th>
+                  <th>% imóvel</th>
+                  <th>Entrada</th>
+                  <th>Fatia parcelas</th>
+                  <th>Pagar financiamento</th>
+                  <th>Contribuição final</th>
+                  <th>Meta</th>
+                  <th>Dif.</th>
+                </tr></thead>
+                <tbody>
+                  ${allocation.people.map(p => `
+                    <tr>
+                      <td>${escHtml(p.name)}</td>
+                      <td>${pctShort(p.ownershipShare)}</td>
+                      <td>${brl(p.downPayment)}</td>
+                      <td>${pctShort(p.financingShare)}</td>
+                      <td>${brl(p.financingPaid)}</td>
+                      <td>${brl(p.finalContribution)}</td>
+                      <td>${brl(p.targetTotal)}</td>
+                      <td>${Math.abs(p.difference) < 0.005 ? '—' : brl(p.difference)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <details class="allocation-monthly">
+              <summary>Rateio mensal de parcelas e amortizações extras</summary>
+              <div class="table-wrap">
+                <table class="allocation-monthly-table">
+                  <thead><tr>
+                    <th>#</th>
+                    <th>Data</th>
+                    <th>Total mês</th>
+                    ${allocation.people.map(p => `<th>${escHtml(p.name)}</th>`).join('')}
+                  </tr></thead>
+                  <tbody>
+                    ${allocation.monthlyRows.map(row => `
+                      <tr>
+                        <td>${row.period}</td>
+                        <td>${row.date}</td>
+                        <td>${brl(row.totalMonth)}</td>
+                        ${allocation.people.map(p => {
+                          const person = row.people.find(x => x.id === p.id);
+                          return `<td>${brl(person?.amount || 0)}</td>`;
+                        }).join('')}
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </div>`;
+      }).join('')}
+    </div>`;
 }
 
 // ─── Chart state ──────────────────────────────────────────────────────────────
@@ -546,28 +898,53 @@ function computeScenario(s) {
   const mRate     = monthlyRate(s.rate, s.rateType);
   const startDate = s.startDate || nextMonthDate();
   const amortPlan = buildAmortPlan(s.amortEntries || []);
+  const amount    = financedAmount(s);
+  const activeBuyers = normalizeParticipants(buyers);
+  const downTotal = totalDownPayment(activeBuyers);
 
   const rows = s.type === 'SAC'
-    ? calcSAC(s.amount, mRate, s.installments, startDate, amortPlan)
-    : calcPrice(s.amount, mRate, s.installments, startDate, amortPlan);
+    ? calcSAC(amount, mRate, s.installments, startDate, amortPlan)
+    : calcPrice(amount, mRate, s.installments, startDate, amortPlan);
 
   const totalInterest     = rows.reduce((a, r) => a + r.interest, 0);
   const totalExtraAmort   = rows.reduce((a, r) => a + r.extraAmort, 0);
   const totalRegularPaid  = rows.reduce((a, r) => a + r.installment, 0);
   const totalPaid         = totalRegularPaid + totalExtraAmort;
+  const totalCost         = downTotal + totalPaid;
   const firstInstallment  = rows[0]?.installment ?? 0;
   const lastInstallment   = rows[rows.length - 1]?.installment ?? 0;
   const actualInstallments = rows.length;
 
-  return { ...s, rows, mRate, totalInterest, totalExtraAmort, totalRegularPaid, totalPaid, firstInstallment, lastInstallment, actualInstallments };
+  return { ...s, amount, participants: activeBuyers, rows, mRate, totalDownPayment: downTotal, totalCost, totalInterest, totalExtraAmort, totalRegularPaid, totalPaid, firstInstallment, lastInstallment, actualInstallments };
 }
 
 // ─── Simulate ─────────────────────────────────────────────────────────────────
 function simulate() {
   saveAllFromDOM();
-  const computed = scenarios.map(computeScenario);
+  const inputErrors = [...validateBuyerInputs(), ...scenarios.flatMap(validateScenarioInputs)];
+  if (inputErrors.length > 0) {
+    document.getElementById('results').innerHTML = '';
+    _chartComputed = null;
+    alert(inputErrors.join('\n'));
+    return;
+  }
 
-  const minTotalPaid     = Math.min(...computed.map(c => c.totalPaid));
+  const computed = scenarios.map(computeScenario);
+  const allocationErrors = [];
+  computed.forEach(c => {
+    const result = buildCostAllocation(c);
+    if (result.errors.length > 0) allocationErrors.push(...result.errors);
+    c.allocation = result.allocation;
+  });
+
+  if (allocationErrors.length > 0) {
+    document.getElementById('results').innerHTML = '';
+    _chartComputed = null;
+    alert(allocationErrors.join('\n'));
+    return;
+  }
+
+  const minTotalCost     = Math.min(...computed.map(c => c.totalCost));
   const minTotalInterest = Math.min(...computed.map(c => c.totalInterest));
 
   let html = `
@@ -582,7 +959,7 @@ function simulate() {
   // ── Summary cards ──
   html += '<div class="summary-grid">';
   computed.forEach(c => {
-    const bestPaid     = c.totalPaid     === minTotalPaid     && computed.length > 1;
+    const bestCost     = c.totalCost     === minTotalCost     && computed.length > 1;
     const bestInterest = c.totalInterest === minTotalInterest && computed.length > 1;
     const termDiff     = c.installments - c.actualInstallments;
     html += `
@@ -593,6 +970,8 @@ function simulate() {
           <span class="badge badge-${c.type.toLowerCase()}" style="margin-left:auto">${c.type}</span>
         </div>
         <table>
+          <tr><td class="label-cell">Valor do imóvel</td><td>${brl(c.propertyValue)}</td></tr>
+          <tr><td class="label-cell">Entrada total</td><td>${brl(c.totalDownPayment)}</td></tr>
           <tr><td class="label-cell">Valor financiado</td><td>${brl(c.amount)}</td></tr>
           <tr><td class="label-cell">Parcelas pagas</td><td>
             ${c.actualInstallments}x
@@ -605,12 +984,15 @@ function simulate() {
           ${c.totalExtraAmort > 0 ? `<tr><td class="label-cell">Amort. extras</td><td class="highlight-extra">${brl(c.totalExtraAmort)}</td></tr>` : ''}
           <tr><td class="label-cell">Total de juros</td>
               <td class="${bestInterest ? 'highlight-best' : ''}">${brl(c.totalInterest)}</td></tr>
-          <tr><td class="label-cell">Total pago</td>
-              <td class="${bestPaid ? 'highlight-best' : ''}">${brl(c.totalPaid)}</td></tr>
+          <tr><td class="label-cell">Total financiamento</td><td>${brl(c.totalPaid)}</td></tr>
+          <tr><td class="label-cell">Custo total</td>
+              <td class="${bestCost ? 'highlight-best' : ''}">${brl(c.totalCost)}</td></tr>
         </table>
       </div>`;
   });
   html += '</div>';
+
+  html += allocationSectionHtml(computed);
 
   // ── Chart ──
   html += chartSectionHtml(computed);
@@ -676,8 +1058,10 @@ function simulate() {
     const footRows = [
       { label: 'Total prestações', fn: c => brl(c.totalRegularPaid) },
       ...(anyExtra ? [{ label: 'Total amort. extras', fn: c => c.totalExtraAmort > 0 ? `<span style="color:#7c3aed">${brl(c.totalExtraAmort)}</span>` : '—' }] : []),
+      { label: 'Entrada total', fn: c => brl(c.totalDownPayment) },
       { label: 'Total de juros',   fn: c => `<span class="${c.totalInterest === minTotalInterest ? 'highlight-best' : ''}">${brl(c.totalInterest)}</span>` },
-      { label: 'Total geral pago', fn: c => `<span class="${c.totalPaid === minTotalPaid ? 'highlight-best' : ''}">${brl(c.totalPaid)}</span>` },
+      { label: 'Total financiamento', fn: c => brl(c.totalPaid) },
+      { label: 'Custo total', fn: c => `<span class="${c.totalCost === minTotalCost ? 'highlight-best' : ''}">${brl(c.totalCost)}</span>` },
     ];
     footRows.forEach(row => {
       html += `<tr><td colspan="${fixedCols}" style="text-align:left">${row.label}</td>`;
@@ -706,7 +1090,8 @@ function simulate() {
           &nbsp;·&nbsp; ${c.actualInstallments} parcelas
           ${termDiff > 0 ? `<span class="term-reduced">▼ −${termDiff}</span>` : ''}
           &nbsp;·&nbsp; Juros: <strong>${brl(c.totalInterest)}</strong>
-          &nbsp;·&nbsp; Total: <strong>${brl(c.totalPaid)}</strong>
+          &nbsp;·&nbsp; Financ.: <strong>${brl(c.totalPaid)}</strong>
+          &nbsp;·&nbsp; Custo: <strong>${brl(c.totalCost)}</strong>
           <span class="arrow">▼</span>
         </div>
         <div class="amort-table-wrap" id="${tableId}">
@@ -756,13 +1141,17 @@ function exportPdf() {
   const wrappers = document.querySelectorAll('.amort-table-wrap');
   const toggles  = document.querySelectorAll('.amort-toggle');
   const states   = Array.from(wrappers).map(w => w.classList.contains('open'));
+  const allocationDetails = document.querySelectorAll('.allocation-monthly');
+  const allocationStates  = Array.from(allocationDetails).map(d => d.open);
 
   wrappers.forEach((w, i) => { w.classList.add('open'); if (toggles[i]) toggles[i].classList.add('open'); });
+  allocationDetails.forEach(d => { d.open = true; });
 
   function restore() {
     wrappers.forEach((w, i) => {
       if (!states[i]) { w.classList.remove('open'); if (toggles[i]) toggles[i].classList.remove('open'); }
     });
+    allocationDetails.forEach((d, i) => { d.open = allocationStates[i]; });
     window.removeEventListener('afterprint', restore);
   }
   window.addEventListener('afterprint', restore);
@@ -779,7 +1168,7 @@ const STORAGE_KEY = 'amortizacao_v1';
 
 function saveToStorage() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ scenarios, nextId }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ scenarios, buyers, nextId }));
   } catch(e) {}
 }
 
@@ -787,10 +1176,15 @@ function loadFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return false;
-    const { scenarios: saved, nextId: savedId } = JSON.parse(raw);
+    const { scenarios: saved, buyers: savedBuyers, nextId: savedId } = JSON.parse(raw);
     if (!Array.isArray(saved) || saved.length === 0) return false;
-    scenarios = saved;
-    nextId    = savedId ?? (Math.max(...saved.map(s => s.id)) + 1);
+    buyers = normalizeParticipants(
+      Array.isArray(savedBuyers) && savedBuyers.length > 0
+        ? savedBuyers
+        : saved.find(s => Array.isArray(s.participants) && s.participants.length > 0)?.participants
+    );
+    scenarios = saved.map(normalizeScenario);
+    nextId    = Math.max(savedId ?? 1, Math.max(...scenarios.map(s => s.id)) + 1);
     return true;
   } catch(e) { return false; }
 }
@@ -799,14 +1193,16 @@ function clearStorage() {
   if (!confirm('Apagar todos os cenários salvos e voltar ao padrão?')) return;
   localStorage.removeItem(STORAGE_KEY);
   scenarios = [];
+  buyers = defaultParticipants();
   nextId    = 1;
   document.getElementById('results').innerHTML = '';
+  renderBuyers();
   loadDefaults();
 }
 
 function loadDefaults() {
-  addScenario({ name: 'SAC — 12,5% a.a.',   type: 'SAC',   rate: 12.5, rateType: 'annual', amount: 270000, installments: 420, startDate: '2026-01-03' });
-  addScenario({ name: 'Price — 12,5% a.a.', type: 'Price', rate: 12.5, rateType: 'annual', amount: 270000, installments: 420, startDate: '2026-01-03' });
+  addScenario({ name: 'SAC — 12,5% a.a.',   type: 'SAC',   rate: 12.5, rateType: 'annual', propertyValue: 270000, installments: 420, startDate: '2026-01-03' });
+  addScenario({ name: 'Price — 12,5% a.a.', type: 'Price', rate: 12.5, rateType: 'annual', propertyValue: 270000, installments: 420, startDate: '2026-01-03' });
 }
 
 // Save before the tab/window closes so even unsaved form edits are captured
@@ -814,7 +1210,9 @@ window.addEventListener('beforeunload', () => { saveAllFromDOM(); saveToStorage(
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 if (!loadFromStorage()) {
+  buyers = defaultParticipants();
   loadDefaults();
 } else {
   renderScenarios();
 }
+renderBuyers();

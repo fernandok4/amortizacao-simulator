@@ -4,15 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Comparador de Amortização — SAC &amp; Price</title>
-  <meta name="description" content="Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais e o impacto de amortizações antecipadas no seu financiamento." />
-  <meta name="keywords" content="amortização, SAC, Price, financiamento, simulador, calculadora, parcelas, juros, amortização extra" />
+  <meta name="description" content="Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais, rateio entre compradores e o impacto de amortizações antecipadas." />
+  <meta name="keywords" content="amortização, SAC, Price, financiamento, simulador, calculadora, parcelas, juros, amortização extra, rateio imóvel" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://fernandok4.github.io/amortizacao-simulator/" />
 
   <!-- Open Graph -->
   <meta property="og:type" content="website" />
   <meta property="og:title" content="Comparador de Amortização — SAC &amp; Price" />
-  <meta property="og:description" content="Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais e o impacto de amortizações antecipadas." />
+  <meta property="og:description" content="Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais, rateio entre compradores e o impacto de amortizações antecipadas." />
   <meta property="og:url" content="https://fernandok4.github.io/amortizacao-simulator/" />
   <meta property="og:locale" content="pt_BR" />
   <meta property="og:site_name" content="Comparador de Amortização" />
@@ -20,7 +20,7 @@
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="Comparador de Amortização — SAC &amp; Price" />
-  <meta name="twitter:description" content="Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price." />
+  <meta name="twitter:description" content="Simule e compare financiamentos com amortizações extras, juros e rateio entre compradores." />
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
@@ -28,7 +28,7 @@
     "@context": "https://schema.org",
     "@type": "WebApplication",
     "name": "Comparador de Amortização — SAC & Price",
-    "description": "Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais e o impacto de amortizações antecipadas no seu financiamento.",
+    "description": "Simule e compare financiamentos com amortizações extras usando Tabela SAC e Tabela Price. Calcule parcelas, juros totais, rateio entre compradores e o impacto de amortizações antecipadas.",
     "url": "https://fernandok4.github.io/amortizacao-simulator/",
     "applicationCategory": "FinanceApplication",
     "operatingSystem": "All",
@@ -53,7 +53,7 @@
   <div class="header-inner">
     <div class="header-eyebrow">Planejamento Financeiro</div>
     <h1>Comparador de <span>Amortização</span></h1>
-    <p>Simule e compare financiamentos com amortizações extras — Tabela SAC e Tabela Price</p>
+    <p>Simule financiamentos, amortizações extras e o rateio entre compradores — Tabela SAC e Tabela Price</p>
   </div>
 </header>
 
@@ -63,6 +63,7 @@
     <button class="btn btn-success" onclick="simulate()">▶ Simular</button>
     <button class="btn btn-ghost" onclick="clearStorage()" title="Apagar cenários salvos e voltar ao padrão">↺ Resetar</button>
   </div>
+  <div id="buyers"></div>
   <div id="scenarios"></div>
   <div id="results"></div>
 </main>
